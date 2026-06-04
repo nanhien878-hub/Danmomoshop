@@ -274,13 +274,29 @@ let currentProfile = null;
 let currentPage = 'home';
 let currentProductId = null;
 let adminTab = 'dashboard';
+// ================================================================
+// UTILS
+// ================================================================
 
-// ═══════════════════════════════════════════════
-//  UTILS
-// ═══════════════════════════════════════════════
-const fmtVND = n => new Intl.NumberFormat('vi-VN', {
-    style: 'currency', 
-    currency: 'VND'
+const fmtVND = n =&gt; new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND'
+}).format(n);
+
+const fmtDate = s =&gt; new Intl.DateTimeFormat('vi-VN', {
+  day: '2-digit', month: '2-digit', year: 'numeric',
+  hour: '2-digit', minute: '2-digit'
+}).format(new Date(s));
+
+const fmtDateShort = s =&gt; new Intl.DateTimeFormat('vi-VN', {
+  day: '2-digit', month: '2-digit', year: 'numeric'
+}).format(new Date(s));
+
+const esc = s =&gt;
+  (s||'').replace(/&/g,'&amp;').replace(/&lt;/g,'&lt;').replace(/&gt;/g,'&gt;').replace(/"/g,'&quot;');
+
+const $ = id =&gt; document.getElementById(id);
+const el = html =&gt; { const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; };
 }).format(n);
 
 const fmtDate = s => new Intl.DateTimeFormat('vi-VN', {
