@@ -278,9 +278,19 @@ let adminTab = 'dashboard';
 // ═══════════════════════════════════════════════
 //  UTILS
 // ═══════════════════════════════════════════════
-const fmtVND = n => new Intl.NumberFormat('vi-VN',{style:'currency',cur
-const fmtDate = s => new Intl.DateTimeFormat('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(s));
-const fmtDateShort = s => new Intl.DateTimeFormat('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date(s));
+const fmtVND = n => new Intl.NumberFormat('vi-VN', {
+    style: 'currency', 
+    currency: 'VND'
+}).format(n);
+
+const fmtDate = s => new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+}).format(new Date(s));
+
+const fmtDateShort = s => new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit', month: '2-digit', year: 'numeric'
+}).format(new Date(s));
+  
 const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const $ = id => document.getElementById(id);
 const el = html => { const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; };
