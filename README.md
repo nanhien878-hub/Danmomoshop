@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html
 <html lang="vi">
 <head>
 <meta charset="UTF-8"/>
@@ -278,4 +278,1154 @@ let adminTab = 'dashboard';
 // ═══════════════════════════════════════════════
 //  UTILS
 // ═══════════════════════════════════════════════
-const fmtVND = n => new Intl.NumberFormat('vi-VN',{style:'currency',c
+const fmtVND = n => new Intl.NumberFormat('vi-VN',{style:'currency',cur
+const fmtDate = s => new Intl.DateTimeFormat('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(s));
+const fmtDateShort = s => new Intl.DateTimeFormat('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date(s));
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const $ = id => document.getElementById(id);
+const el = html => { const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; };
+
+function toast(msg, type='success', dur=3200) {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  $('toasts').appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, dur);
+}
+
+let confirmResolve = null;
+function confirm(title, msg) {
+  $('confirm-title').textContent = title;
+  $('confirm-msg').textContent = msg;
+  $('confirm-overlay').classList.add('open');
+  return new Promise(res => { confirmResolve = res; });
+}
+function closeConfirm() { $('confirm-overlay').classList.remove('open'); if(confirmResolve) confirmResolve(false); confirmResolve=null; }
+$('confirm-ok').onclick = () => { $('confirm-overlay').classList.remove('open'); if(confirmResolve) confirmResolve(true); confirmResolve=null; };
+
+const THUMB = {
+  '1':'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500&q=75',
+  '2':'https://images.unsplash.com/photo-1561070791-2526d30994b5?w=500&q=75',
+  '3':'https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?w=500&q=75',
+  '4':'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=500&q=75',
+};
+const getThumb = (p) => p.image_url || THUMB[p.category_id] || THUMB['3'];
+
+// ═══════════════════════════════════════════════
+//  AUTH
+// ═══════════════════════════════════════════════
+async function fetchProfile(uid) {
+  const { data } = await sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+  return data;
+}
+
+async function refreshProfile() {
+  if (!currentUser) return;
+  currentProfile = await fetchProfile(currentUser.id);
+  updateNavAuth();
+}
+
+function updateNavAuth() {
+  const loggedIn = !!currentUser;
+  const isAdmin = currentProfile?.role === 'admin';
+  const bal = currentProfile?.balance || 0;
+
+  // Desktop nav
+  $('nav-balance').style.display = loggedIn ? 'inline-flex' : 'none';
+  $('nav-balance').textContent = '💰 ' + fmtVND(bal);
+  $('nav-wallet').style.display = loggedIn ? '' : 'none';
+  $('nav-orders').style.display = loggedIn ? '' : 'none';
+  $('nav-profile').style.display = loggedIn ? '' : 'none';
+  $('nav-admin').style.display = isAdmin ? '' : 'none';
+  $('nav-login').style.display = loggedIn ? 'none' : '';
+  $('nav-register').style.display = loggedIn ? 'none' : '';
+  $('nav-logout').style.display = loggedIn ? '' : 'none';
+
+  // Mobile nav
+  $('mobile-balance').style.display = loggedIn ? '' : 'none';
+  $('mobile-balance').textContent = '💰 Số dư: ' + fmtVND(bal);
+  $('mb-wallet').style.display = loggedIn ? '' : 'none';
+  $('mb-orders').style.display = loggedIn ? '' : 'none';
+  $('mb-profile').style.display = loggedIn ? '' : 'none';
+  $('mb-admin').style.display = isAdmin ? '' : 'none';
+  $('mb-login').style.display = loggedIn ? 'none' : '';
+  $('mb-register').style.display = loggedIn ? 'none' : '';
+  $('mb-logout').style.display = loggedIn ? '' : 'none';
+}
+
+async function handleLogout() {
+  await sb.auth.signOut();
+  currentUser = null; currentProfile = null;
+  updateNavAuth();
+  navigate('home');
+  toast('Đã đăng xuất');
+}
+
+function toggleMobileMenu() {
+  $('mobile-menu').classList.toggle('open');
+}
+function closeMobile() { $('mobile-menu').classList.remove('open'); }
+
+// ═══════════════════════════════════════════════
+//  ROUTER
+// ═══════════════════════════════════════════════
+function navigate(page, data) {
+  currentPage = page;
+  if (data?.productId) currentProductId = data.productId;
+  if (data?.adminTab) adminTab = data.adminTab;
+  // Highlight active nav
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  render();
+}
+
+function render() {
+  const p = $('page');
+  switch(currentPage) {
+    case 'home':     renderHome(); break;
+    case 'products': renderProducts(); break;
+    case 'product':  renderProductDetail(); break;
+    case 'login':    renderLogin(); break;
+    case 'register': renderRegister(); break;
+    case 'wallet':   requireAuth(renderWallet); break;
+    case 'topup':    requireAuth(renderTopUp); break;
+    case 'withdraw': requireAuth(renderWithdraw); break;
+    case 'orders':   requireAuth(renderOrders); break;
+    case 'profile':  requireAuth(renderProfile); break;
+    case 'admin':    requireAdmin(renderAdmin); break;
+    default:         renderHome();
+  }
+}
+
+function requireAuth(fn) {
+  if (!currentUser) { navigate('login'); return; }
+  fn();
+}
+function requireAdmin(fn) {
+  if (!currentUser) { navigate('login'); return; }
+  if (currentProfile?.role !== 'admin') { toast('Bạn không có quyền truy cập', 'error'); navigate('home'); return; }
+  fn();
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: HOME
+// ═══════════════════════════════════════════════
+async function renderHome() {
+  $('page').innerHTML = `
+    <div class="hero">
+      <h1>Kho <span>Sản Phẩm Số</span> Chất Lượng</h1>
+      <p>Ebook, Template, Preset, Tool & nhiều hơn nữa – mua ngay, nhận ngay.</p>
+      <div class="hero-btns">
+        <button class="btn btn-primary" onclick="navigate('products')">Khám phá sản phẩm →</button>
+        ${!currentUser ? `<button class="btn btn-secondary" onclick="navigate('register')">Đăng ký miễn phí</button>` : ''}
+      </div>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card"><div class="feature-icon">⚡</div><div><div class="feature-title">Giao hàng tức thì</div><div class="feature-desc">Nhận sản phẩm ngay sau khi thanh toán thành công.</div></div></div>
+      <div class="feature-card"><div class="feature-icon">🔒</div><div><div class="feature-title">Bảo mật tuyệt đối</div><div class="feature-desc">Thông tin tài khoản được mã hoá và bảo vệ.</div></div></div>
+      <div class="feature-card"><div class="feature-icon">🎧</div><div><div class="feature-title">Hỗ trợ 24/7</div><div class="feature-desc">Đội ngũ hỗ trợ luôn sẵn sàng giải đáp thắc mắc.</div></div></div>
+    </div>
+    <div class="section-header">
+      <div class="section-title">Sản phẩm nổi bật</div>
+      <button class="btn btn-ghost btn-sm" onclick="navigate('products')">Xem tất cả →</button>
+    </div>
+    <div class="products-grid" id="home-products"><div class="empty-state"><div class="icon">⏳</div><p>Đang tải...</p></div></div>
+  `;
+  const { data } = await sb.from('products').select('*, categories(*)').eq('is_active',true).order('created_at',{ascending:false}).limit(8);
+  const products = Array.isArray(data) ? data : [];
+  $('home-products').innerHTML = products.length ? products.map(renderProductCard).join('') : `<div class="empty-state" style="grid-column:1/-1"><div class="icon">📦</div><p>Chưa có sản phẩm</p></div>`;
+}
+
+function renderProductCard(p) {
+  return `
+    <div class="product-card" onclick="navigate('product',{productId:'${esc(p.id)}'})">
+      <div class="product-thumb"><img src="${esc(getThumb(p))}" alt="${esc(p.name)}" loading="lazy"></div>
+      <div class="product-info">
+        ${p.categories ? `<div class="product-cat">${esc(p.categories.icon)} ${esc(p.categories.name)}</div>` : ''}
+        <div class="product-name">${esc(p.name)}</div>
+        <div class="product-price">${fmtVND(p.price)}</div>
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: PRODUCTS
+// ═══════════════════════════════════════════════
+let prodSearch = '';
+let prodCat = null;
+async function renderProducts() {
+  $('page').innerHTML = `
+    <div class="page-title">Tất cả sản phẩm</div>
+    <div class="filter-row" id="filter-row">
+      <input class="form-input" style="max-width:260px" placeholder="🔍 Tìm kiếm sản phẩm..." id="search-input" value="${esc(prodSearch)}" oninput="debouncedSearch(this.value)">
+      <div id="cat-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    </div>
+    <div id="count-row" style="font-size:.82rem;color:var(--muted);margin-bottom:12px"></div>
+    <div class="products-grid" id="prod-grid"><div class="empty-state" style="grid-column:1/-1"><div class="icon">⏳</div><p>Đang tải...</p></div></div>
+  `;
+  const { data: cats } = await sb.from('categories').select('*').order('id');
+  const categories = Array.isArray(cats) ? cats : [];
+  const catHtml = `<button class="cat-btn ${prodCat===null?'active':''}" onclick="filterCat(null)">Tất cả</button>` +
+    categories.map(c => `<button class="cat-btn ${prodCat===c.id?'active':''}" onclick="filterCat(${c.id})">${c.icon} ${esc(c.name)}</button>`).join('');
+  $('cat-btns').innerHTML = catHtml;
+  await loadProducts();
+}
+
+async function loadProducts() {
+  const grid = $('prod-grid');
+  const countEl = $('count-row');
+  if (!grid) return;
+  grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="icon">⏳</div><p>Đang tải...</p></div>`;
+  let q = sb.from('products').select('*, categories(*)').eq('is_active',true).order('created_at',{ascending:false});
+  if (prodCat !== null) q = q.eq('category_id', prodCat);
+  if (prodSearch.trim()) q = q.ilike('name', `%${prodSearch.trim()}%`);
+  const { data } = await q;
+  const products = Array.isArray(data) ? data : [];
+  if (countEl) countEl.textContent = `${products.length} sản phẩm`;
+  grid.innerHTML = products.length ? products.map(renderProductCard).join('') : `<div class="empty-state" style="grid-column:1/-1"><div class="icon">🔍</div><p>Không tìm thấy sản phẩm</p></div>`;
+}
+
+let searchTimer = null;
+function debouncedSearch(v) { prodSearch=v; clearTimeout(searchTimer); searchTimer=setTimeout(loadProducts,300); }
+function filterCat(id) { prodCat=id; renderProducts(); }
+
+// ═══════════════════════════════════════════════
+//  PAGE: PRODUCT DETAIL
+// ═══════════════════════════════════════════════
+async function renderProductDetail() {
+  $('page').innerHTML = `<div style="color:var(--muted)">⏳ Đang tải sản phẩm...</div>`;
+  const { data: p } = await sb.from('products').select('*, categories(*)').eq('id', currentProductId).eq('is_active',true).maybeSingle();
+  if (!p) { $('page').innerHTML=`<div class="empty-state"><div class="icon">😕</div><p>Sản phẩm không tồn tại</p><br><button class="btn btn-secondary" onclick="navigate('products')">Quay lại</button></div>`; return; }
+  const bal = currentProfile?.balance || 0;
+  const canAfford = bal >= p.price;
+  $('page').innerHTML = `
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:18px" onclick="navigate('products')">← Quay lại</button>
+    <div class="product-detail">
+      <div class="product-detail-img"><img src="${esc(getThumb(p))}" alt="${esc(p.name)}"></div>
+      <div>
+        ${p.categories ? `<div class="product-cat" style="margin-bottom:6px">${esc(p.categories.icon)} ${esc(p.categories.name)}</div>` : ''}
+        <h1 style="font-size:1.4rem;font-weight:800;line-height:1.3;margin-bottom:10px">${esc(p.name)}</h1>
+        ${p.description ? `<p class="product-detail-desc">${esc(p.description)}</p>` : ''}
+        <div class="product-detail-price">${fmtVND(p.price)}</div>
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:16px">Đăng ngày ${fmtDateShort(p.created_at)}</div>
+        ${currentUser && !canAfford ? `
+          <div class="balance-alert">⚠️ Số dư (${fmtVND(bal)}) không đủ. <button class="btn btn-ghost btn-sm" style="color:var(--yellow);text-decoration:underline;padding:0 0 0 4px" onclick="navigate('topup')">Nạp tiền</button></div>
+        ` : ''}
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="buy-btn" onclick="handleBuy('${esc(p.id)}','${esc(p.name)}',${p.price})">
+            🛒 ${currentUser ? 'Mua ngay' : 'Đăng nhập để mua'}
+          </button>
+          <button class="btn btn-secondary" onclick="navigate('products')">Xem thêm sản phẩm</button>
+        </div>
+        ${currentUser ? `
+          <div style="margin-top:18px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+            <div><div style="font-size:.78rem;color:var(--muted);margin-bottom:2px">Số dư ví của bạn</div><div style="font-size:1.2rem;font-weight:800;color:var(--green)">${fmtVND(bal)}</div></div>
+            <button class="btn btn-secondary btn-sm" onclick="navigate('topup')">Nạp tiền</button>
+          </div>` : ''}
+      </div>
+    </div>`;
+}
+
+async function handleBuy(productId, productName, price) {
+  if (!currentUser) { navigate('login'); return; }
+  const btn = $('buy-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Đang xử lý...';
+  const { data, error } = await sb.rpc('purchase_product', { p_product_id: productId });
+  if (error || !data?.ok) {
+    toast(data?.error || error?.message || 'Mua hàng thất bại', 'error');
+    btn.disabled = false;
+    btn.innerHTML = '🛒 Mua ngay';
+  } else {
+    await refreshProfile();
+    toast('Mua hàng thành công! 🎉');
+    navigate('orders');
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: LOGIN
+// ═══════════════════════════════════════════════
+function renderLogin() {
+  $('page').innerHTML = `
+    <div style="max-width:380px;margin:0 auto">
+      <div style="text-align:center;margin-bottom:24px">
+        <div style="width:56px;height:56px;border-radius:50%;background:rgba(59,130,246,.15);display:flex;align-items:center;justify-content:center;font-size:1.5rem;margin:0 auto 10px">🛒</div>
+        <div style="font-size:1.2rem;font-weight:800">MMO Store</div>
+        <div style="font-size:.85rem;color:var(--muted)">Sản phẩm số chất lượng</div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div class="section-title" style="margin-bottom:18px">Đăng nhập</div>
+          <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="login-email" type="email" placeholder="example@email.com" autocomplete="email"></div>
+          <div class="form-group"><label class="form-label">Mật khẩu</label><input class="form-input" id="login-pw" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitLogin()"></div>
+          <div id="login-err" style="color:var(--red);font-size:.82rem;margin-bottom:10px;display:none"></div>
+          <button class="btn btn-primary btn-full" id="login-btn" onclick="submitLogin()">Đăng nhập</button>
+          <div style="text-align:center;margin-top:14px;font-size:.85rem;color:var(--muted)">Chưa có tài khoản? <button class="btn btn-ghost btn-sm" style="color:var(--primary);padding:0" onclick="navigate('register')">Đăng ký ngay</button></div>
+
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitLogin() {
+  const email = $('login-email').value.trim().toLowerCase();
+  const pw = $('login-pw').value;
+  const errEl = $('login-err');
+  const btn = $('login-btn');
+  if (!email || !pw) { errEl.textContent='Vui lòng điền đầy đủ thông tin'; errEl.style.display=''; return; }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Đang đăng nhập...';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if (error) {
+    errEl.textContent = error.message.includes('Invalid') ? 'Email hoặc mật khẩu không đúng' : error.message;
+    errEl.style.display = '';
+    btn.disabled = false; btn.textContent = 'Đăng nhập';
+    return;
+  }
+  currentUser = data.user;
+  currentProfile = await fetchProfile(data.user.id);
+  updateNavAuth();
+  toast('Đăng nhập thành công!');
+  navigate(currentProfile?.role === 'admin' ? 'admin' : 'home');
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: REGISTER
+// ═══════════════════════════════════════════════
+function renderRegister() {
+  $('page').innerHTML = `
+    <div style="max-width:380px;margin:0 auto">
+      <div style="text-align:center;margin-bottom:24px">
+        <div style="width:56px;height:56px;border-radius:50%;background:rgba(59,130,246,.15);display:flex;align-items:center;justify-content:center;font-size:1.5rem;margin:0 auto 10px">🛒</div>
+        <div style="font-size:1.2rem;font-weight:800">MMO Store</div>
+        <div style="font-size:.85rem;color:var(--muted)">Tạo tài khoản mới</div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div class="section-title" style="margin-bottom:18px">Đăng ký</div>
+          <div class="form-group"><label class="form-label">Họ tên (tuỳ chọn)</label><input class="form-input" id="reg-name" placeholder="Nguyễn Văn A"></div>
+          <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="reg-email" type="email" placeholder="example@email.com" autocomplete="email"></div>
+          <div class="form-group"><label class="form-label">Mật khẩu (tối thiểu 6 ký tự)</label><input class="form-input" id="reg-pw" type="password" placeholder="••••••••" autocomplete="new-password"></div>
+          <div class="form-group"><label class="form-label">Xác nhận mật khẩu</label><input class="form-input" id="reg-pw2" type="password" placeholder="Nhập lại mật khẩu" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitRegister()"></div>
+          <div id="reg-err" style="color:var(--red);font-size:.82rem;margin-bottom:10px;display:none"></div>
+          <button class="btn btn-primary btn-full" id="reg-btn" onclick="submitRegister()">Tạo tài khoản</button>
+          <div style="text-align:center;margin-top:14px;font-size:.85rem;color:var(--muted)">Đã có tài khoản? <button class="btn btn-ghost btn-sm" style="color:var(--primary);padding:0" onclick="navigate('login')">Đăng nhập</button></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitRegister() {
+  const name = $('reg-name').value.trim();
+  const email = $('reg-email').value.trim().toLowerCase();
+  const pw = $('reg-pw').value;
+  const pw2 = $('reg-pw2').value;
+  const errEl = $('reg-err');
+  const btn = $('reg-btn');
+  if (!email||!pw||!pw2) { errEl.textContent='Vui lòng điền đầy đủ thông tin'; errEl.style.display=''; return; }
+  if (pw.length<6) { errEl.textContent='Mật khẩu tối thiểu 6 ký tự'; errEl.style.display=''; return; }
+  if (pw!==pw2) { errEl.textContent='Mật khẩu xác nhận không khớp'; errEl.style.display=''; return; }
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Đang tạo tài khoản...';
+  const { data, error } = await sb.auth.signUp({ email, password: pw });
+  if (error) {
+    errEl.textContent = error.message.includes('already') ? 'Email đã được sử dụng' : error.message;
+    errEl.style.display=''; btn.disabled=false; btn.textContent='Tạo tài khoản'; return;
+  }
+  if (data.user && name) {
+    await sb.from('profiles').update({ full_name: name }).eq('id', data.user.id);
+  }
+  toast('Đăng ký thành công! Hãy đăng nhập.');
+  navigate('login');
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: WALLET
+// ═══════════════════════════════════════════════
+async function renderWallet() {
+  await refreshProfile();
+  $('page').innerHTML = `
+    <div class="wallet-hero">
+      <div style="font-size:2rem;margin-bottom:6px">💳</div>
+      <div style="font-size:.85rem;color:var(--muted)">Số dư ví</div>
+      <div class="wallet-balance">${fmtVND(currentProfile?.balance||0)}</div>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="navigate('topup')">+ Nạp tiền</button>
+        <button class="btn btn-success" onclick="navigate('withdraw')">↑ Rút tiền</button>
+        <button class="btn btn-secondary" onclick="navigate('products')">Mua sắm ngay</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Lịch sử giao dịch</div></div>
+      <div class="card-body tx-list" id="tx-list"><div style="text-align:center;color:var(--muted);padding:20px">⏳ Đang tải...</div></div>
+    </div>`;
+  const { data } = await sb.from('transactions').select('*').order('created_at',{ascending:false}).limit(50);
+  const txs = Array.isArray(data) ? data : [];
+  const TXC = {
+    top_up: { icon:'↓', bg:'rgba(52,211,153,.1)', col:'var(--green)', sign:'+', label:'Nạp tiền' },
+    purchase: { icon:'↑', bg:'rgba(248,113,113,.1)', col:'var(--red)', sign:'', label:'Mua hàng' },
+    refund: { icon:'↺', bg:'rgba(96,165,250,.1)', col:'var(--primary-light)', sign:'+', label:'Hoàn tiền' },
+  };
+  $('tx-list').innerHTML = txs.length ? txs.map(t => {
+    const c = TXC[t.type] || TXC.top_up;
+    const abs = Math.abs(t.amount);
+    return `<div class="tx-item">
+      <div class="tx-icon" style="background:${c.bg};color:${c.col}">${c.icon}</div>
+      <div class="tx-info"><div class="tx-desc">${esc(t.description||c.label)}</div><div class="tx-date">${fmtDate(t.created_at)}</div></div>
+      <div class="tx-amt" style="color:${c.col}">${c.sign}${fmtVND(abs)}</div>
+    </div>`;
+  }).join('') : `<div style="text-align:center;color:var(--muted);padding:32px">💳 Chưa có giao dịch nào</div>`;
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: TOP-UP
+// ═══════════════════════════════════════════════
+let topupAmt = '';
+async function renderTopUp() {
+  $('page').innerHTML = `
+    <div class="page-title">Nạp tiền vào ví</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+      <div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-header"><div class="card-title">Tạo yêu cầu nạp tiền</div></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Số tiền muốn nạp (VND)</label>
+              <input class="form-input" id="topup-amt" type="text" inputmode="numeric" placeholder="Ví dụ: 100000" value="${esc(topupAmt)}" oninput="topupAmt=this.value.replace(/\\D/g,'');this.value=topupAmt;updateTopupPreview()">
+              <div id="topup-preview" style="font-size:.82rem;color:var(--muted);margin-top:4px"></div>
+            </div>
+            <div class="quick-amounts">
+              ${[50000,100000,200000,500000].map(v=>`<button class="cat-btn" onclick="setTopupAmt(${v})">${fmtVND(v)}</button>`).join('')}
+            </div>
+            <br>
+            <button class="btn btn-primary btn-full" id="topup-btn" onclick="submitTopup()">Gửi yêu cầu nạp tiền</button>
+          </div>
+        </div>
+        <div class="card" id="qr-card" style="display:none">
+          <div class="card-header"><div class="card-title">Thông tin chuyển khoản</div></div>
+          <div class="card-body">
+            <div class="qr-wrap" id="qr-wrap"></div>
+            <div id="bank-info"></div>
+            <div style="font-size:.78rem;color:var(--muted);text-align:center;margin-top:10px">Sau khi chuyển khoản, admin sẽ duyệt trong 5–30 phút</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Lịch sử yêu cầu</div></div>
+        <div class="card-body" id="topup-history"><div style="text-align:center;color:var(--muted);padding:20px">⏳ Đang tải...</div></div>
+      </div>
+    </div>`;
+  updateTopupPreview();
+  await loadTopupHistory();
+}
+
+function setTopupAmt(v) {
+  topupAmt = String(v);
+  $('topup-amt').value = topupAmt;
+  updateTopupPreview();
+}
+function updateTopupPreview() {
+  const n = parseInt(topupAmt) || 0;
+  const prev = $('topup-preview');
+  if (prev) prev.textContent = n > 0 ? '= ' + fmtVND(n) : '';
+}
+
+async function loadTopupHistory() {
+  const el = $('topup-history');
+  if (!el) return;
+  const { data } = await sb.from('top_up_requests').select('*').order('created_at',{ascending:false}).limit(20);
+  const reqs = Array.isArray(data) ? data : [];
+  const SC = { pending:'badge-pending', approved:'badge-approved', rejected:'badge-rejected' };
+  const SL = { pending:'Chờ duyệt', approved:'Đã duyệt', rejected:'Từ chối' };
+  el.innerHTML = reqs.length ? reqs.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div><div style="font-weight:700;color:var(--green);font-variant-numeric:tabular-nums">+${fmtVND(r.amount)}</div><div style="font-size:.78rem;color:var(--muted)">${fmtDate(r.created_at)}</div>${r.note?`<div style="font-size:.78rem;color:var(--muted)">${esc(r.note)}</div>`:''}</div>
+      <span class="badge ${SC[r.status]}">${SL[r.status]}</span>
+    </div>`).join('') : '<div style="text-align:center;color:var(--muted);padding:24px">Chưa có yêu cầu nào</div>';
+}
+
+async function submitTopup() {
+  const amt = parseInt(topupAmt) || 0;
+  if (amt < 10000) { toast('Số tiền nạp tối thiểu 10.000đ','error'); return; }
+  if (amt > 100000000) { toast('Số tiền nạp tối đa 100.000.000đ','error'); return; }
+  const btn = $('topup-btn');
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Đang gửi...';
+  const { error } = await sb.from('top_up_requests').insert({ user_id: currentUser.id, amount: amt });
+  btn.disabled=false; btn.textContent='Gửi yêu cầu nạp tiền';
+  if (error) { toast('Gửi yêu cầu thất bại: '+error.message,'error'); return; }
+  toast('Đã gửi yêu cầu nạp tiền! Vui lòng chuyển khoản và đợi duyệt.');
+  // Show QR
+  const content = `NAP${currentUser.id.slice(0,8).toUpperCase()} ${amt}`;
+  const qrUrl = `https://img.vietqr.io/image/TCB-8888831474-compact2.jpg?amount=${amt}&addInfo=${encodeURIComponent(content)}&accountName=${encodeURIComponent('HO TINH KHAI')}`;
+  $('qr-wrap').innerHTML = `<img src="${qrUrl}" alt="QR chuyển khoản">`;
+  $('bank-info').innerHTML = [
+    ['Ngân hàng','Techcombank (TCB)'],['Số tài khoản','8888831474'],
+    ['Chủ tài khoản','HO TINH KHAI'],
+    ['Số tiền', fmtVND(amt)],['Nội dung', content],
+  ].map(([k,v])=>`<div class="bank-info-row"><span>${k}</span><span>${esc(String(v))}</span></div>`).join('');
+  $('qr-card').style.display = '';
+  await loadTopupHistory();
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: WITHDRAW
+// ═══════════════════════════════════════════════
+let withdrawAmt = '';
+async function renderWithdraw() {
+  await refreshProfile();
+  const bal = currentProfile?.balance || 0;
+  $('page').innerHTML = `
+    <div class="page-title">Rút tiền</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+      <div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-header"><div class="card-title">Tạo yêu cầu rút tiền</div></div>
+          <div class="card-body">
+            <div class="wallet-hero" style="padding:16px;margin-bottom:16px">
+              <div style="font-size:.82rem;color:var(--muted)">Số dư khả dụng</div>
+              <div style="font-size:1.6rem;font-weight:900;color:var(--green);margin:4px 0">${fmtVND(bal)}</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Ngân hàng *</label>
+              <select class="form-select" id="wd-bank">
+                <option value="">-- Chọn ngân hàng --</option>
+                ${['Techcombank','Vietcombank','BIDV','Agribank','VPBank','MB Bank','ACB','SHB','Sacombank','TPBank','HDBank','VIB','OCB','SeABank','Eximbank','Nam A Bank','SCB','LienVietPostBank'].map(b=>`<option value="${b}">${b}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Số tài khoản *</label>
+              <input class="form-input" id="wd-account" type="text" inputmode="numeric" placeholder="Ví dụ: 1234567890">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Chủ tài khoản *</label>
+              <input class="form-input" id="wd-holder" type="text" placeholder="NGUYEN VAN A (viết hoa không dấu)">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Số tiền muốn rút (VND)</label>
+              <input class="form-input" id="wd-amt" type="text" inputmode="numeric" placeholder="Ví dụ: 100000" value="${esc(withdrawAmt)}" oninput="withdrawAmt=this.value.replace(/\\D/g,'');this.value=withdrawAmt;updateWithdrawPreview()">
+              <div id="wd-preview" style="font-size:.82rem;color:var(--muted);margin-top:4px"></div>
+            </div>
+            <div class="quick-amounts">
+              ${[50000,100000,200000,500000].map(v=>`<button class="cat-btn" onclick="setWithdrawAmt(${v})">${fmtVND(v)}</button>`).join('')}
+              <button class="cat-btn" onclick="setWithdrawAmt(${bal})">Tất cả</button>
+            </div>
+            <br>
+            <div id="wd-err" style="color:var(--red);font-size:.82rem;margin-bottom:10px;display:none"></div>
+            <button class="btn btn-success btn-full" id="wd-btn" onclick="submitWithdraw()">↑ Gửi yêu cầu rút tiền</button>
+            <div style="font-size:.78rem;color:var(--muted);text-align:center;margin-top:10px">⚠️ Admin sẽ xử lý yêu cầu trong 5–60 phút. Rút tối thiểu 50.000đ.</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Lịch sử rút tiền</div></div>
+        <div class="card-body" id="wd-history"><div style="text-align:center;color:var(--muted);padding:20px">⏳ Đang tải...</div></div>
+      </div>
+    </div>`;
+  updateWithdrawPreview();
+  await loadWithdrawHistory();
+}
+
+function setWithdrawAmt(v) {
+  withdrawAmt = String(v);
+  $('wd-amt').value = withdrawAmt;
+  updateWithdrawPreview();
+}
+function updateWithdrawPreview() {
+  const n = parseInt(withdrawAmt) || 0;
+  const prev = $('wd-preview');
+  if (prev) prev.textContent = n > 0 ? '= ' + fmtVND(n) : '';
+}
+
+async function loadWithdrawHistory() {
+  const el = $('wd-history');
+  if (!el) return;
+  const { data } = await sb.from('withdraw_requests').select('*').order('created_at',{ascending:false}).limit(20);
+  const reqs = Array.isArray(data) ? data : [];
+  const SC = { pending:'badge-pending', approved:'badge-approved', rejected:'badge-rejected' };
+  const SL = { pending:'Chờ duyệt', approved:'Đã duyệt', rejected:'Từ chối' };
+  el.innerHTML = reqs.length ? reqs.map(r => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-weight:800;color:var(--orange);font-variant-numeric:tabular-nums">-${fmtVND(r.amount)}</div>
+        <span class="badge ${SC[r.status]}">${SL[r.status]}</span>
+      </div>
+      <div style="font-size:.8rem;color:var(--muted)">${esc(r.bank_name)} – ${esc(r.account_number)} (${esc(r.account_holder)})</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-top:2px">${fmtDate(r.created_at)}${r.note?` · ${esc(r.note)}`:''}</div>
+    </div>`).join('') : '<div style="text-align:center;color:var(--muted);padding:24px">Chưa có yêu cầu rút tiền</div>';
+}
+
+async function submitWithdraw() {
+  const bank = $('wd-bank').value.trim();
+  const account = $('wd-account').value.trim();
+  const holder = $('wd-holder').value.trim().toUpperCase();
+  const amt = parseInt(withdrawAmt) || 0;
+  const errEl = $('wd-err');
+  const btn = $('wd-btn');
+  errEl.style.display = 'none';
+  if (!bank) { errEl.textContent='Vui lòng chọn ngân hàng'; errEl.style.display=''; return; }
+  if (!account) { errEl.textContent='Vui lòng nhập số tài khoản'; errEl.style.display=''; return; }
+  if (!holder) { errEl.textContent='Vui lòng nhập tên chủ tài khoản'; errEl.style.display=''; return; }
+  if (amt < 50000) { errEl.textContent='Số tiền rút tối thiểu 50.000đ'; errEl.style.display=''; return; }
+  await refreshProfile();
+  if ((currentProfile?.balance||0) < amt) { errEl.textContent='Số dư không đủ để rút'; errEl.style.display=''; return; }
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Đang gửi...';
+  const { error } = await sb.from('withdraw_requests').insert({
+    user_id: currentUser.id, amount: amt,
+    bank_name: bank, account_number: account, account_holder: holder
+  });
+  btn.disabled=false; btn.textContent='↑ Gửi yêu cầu rút tiền';
+  if (error) { errEl.textContent='Gửi yêu cầu thất bại: '+error.message; errEl.style.display=''; return; }
+  toast('Đã gửi yêu cầu rút tiền! Vui lòng chờ admin xử lý.');
+  withdrawAmt = '';
+  $('wd-amt').value = '';
+  $('wd-bank').value = '';
+  $('wd-account').value = '';
+  $('wd-holder').value = '';
+  await loadWithdrawHistory();
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: ORDERS
+// ═══════════════════════════════════════════════
+async function renderOrders() {
+  $('page').innerHTML = `
+    <div class="page-title">Đơn hàng của tôi</div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Lịch sử mua hàng</div></div>
+      <div class="card-body order-list" id="order-list"><div style="text-align:center;color:var(--muted);padding:20px">⏳ Đang tải...</div></div>
+    </div>`;
+  const { data } = await sb.from('orders').select('*').order('created_at',{ascending:false}).limit(50);
+  const orders = Array.isArray(data) ? data : [];
+  const SC = { completed:'badge-completed', refunded:'badge-refunded', cancelled:'badge-cancelled' };
+  const SL = { completed:'Hoàn thành', refunded:'Hoàn tiền', cancelled:'Đã huỷ' };
+  $('order-list').innerHTML = orders.length ? orders.map(o => `
+    <div class="order-item">
+      <div class="order-icon" style="background:rgba(59,130,246,.12)">📦</div>
+      <div class="order-info"><div class="order-name">${esc(o.product_name)}</div><div class="order-date">${fmtDate(o.created_at)}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <div style="font-weight:800;color:var(--red);font-variant-numeric:tabular-nums">-${fmtVND(o.product_price)}</div>
+        <span class="badge ${SC[o.status]}">${SL[o.status]}</span>
+      </div>
+    </div>`).join('') : `<div style="text-align:center;padding:40px">
+      <div style="font-size:2.5rem;margin-bottom:10px">📦</div>
+      <p style="color:var(--muted);margin-bottom:14px">Chưa có đơn hàng nào</p>
+      <button class="btn btn-primary btn-sm" onclick="navigate('products')">Xem sản phẩm</button>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: PROFILE
+// ═══════════════════════════════════════════════
+async function renderProfile() {
+  await refreshProfile();
+  const p = currentProfile;
+  const initials = (p?.full_name||p?.email||'?').charAt(0).toUpperCase();
+  $('page').innerHTML = `
+    <div class="page-title">Hồ sơ cá nhân</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+      <div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-body" style="display:flex;align-items:center;gap:14px">
+            <div class="profile-avatar">${esc(initials)}</div>
+            <div>
+              <div style="font-weight:700;font-size:1.05rem">${esc(p?.full_name||'Chưa đặt tên')}</div>
+              <div style="font-size:.85rem;color:var(--muted)">${esc(p?.email||'')}</div>
+              <span class="badge ${p?.role==='admin'?'badge-admin':''}" style="margin-top:5px">${p?.role==='admin'?'🛡️ Admin':'👤 Người dùng'}</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Thông tin tài khoản</div></div>
+          <div class="card-body">
+            <div class="info-row"><span>Email</span><span style="font-weight:600">${esc(p?.email||'')}</span></div>
+            <div class="info-row"><span>Ngày tham gia</span><span style="font-weight:600">${p?.created_at?fmtDateShort(p.created_at):'—'}</span></div>
+            <div class="info-row"><span>Vai trò</span><span style="font-weight:600">${p?.role==='admin'?'Quản trị viên':'Người dùng'}</span></div>
+            <div class="info-row"><span>Số dư ví</span><span style="font-weight:800;color:var(--green);font-variant-numeric:tabular-nums">${fmtVND(p?.balance||0)}</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Chỉnh sửa hồ sơ</div></div>
+        <div class="card-body">
+          <div class="form-group"><label class="form-label">Họ tên</label><input class="form-input" id="pf-name" value="${esc(p?.full_name||'')}" placeholder="Nguyễn Văn A"></div>
+          <div id="pf-err" style="color:var(--red);font-size:.82rem;margin-bottom:10px;display:none"></div>
+          <button class="btn btn-primary" id="pf-save" onclick="saveProfile()">Lưu thay đổi</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveProfile() {
+  const name = $('pf-name').value.trim();
+  const btn = $('pf-save');
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Đang lưu...';
+  const { error } = await sb.from('profiles').update({ full_name: name||null }).eq('id', currentUser.id);
+  btn.disabled=false; btn.textContent='Lưu thay đổi';
+  if (error) { toast('Lưu thất bại: '+error.message,'error'); return; }
+  await refreshProfile();
+  toast('Đã cập nhật hồ sơ!');
+}
+
+// ═══════════════════════════════════════════════
+//  PAGE: ADMIN
+// ═══════════════════════════════════════════════
+const ADMIN_TABS = [
+  {id:'dashboard', label:'📊 Dashboard'},
+  {id:'products',  label:'📦 Sản phẩm'},
+  {id:'users',     label:'👥 Người dùng'},
+  {id:'orders',    label:'🛒 Đơn hàng'},
+  {id:'topup',     label:'💰 Nạp tiền'},
+  {id:'withdraw',  label:'💸 Rút tiền'},
+];
+
+async function renderAdmin() {
+  $('page').innerHTML = `
+    <div class="admin-wrap">
+      <div class="admin-sidebar">
+        <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;padding:4px 12px 10px">Quản trị</div>
+        ${ADMIN_TABS.map(t=>`<button class="admin-nav-item ${adminTab===t.id?'active':''}" onclick="switchAdminTab('${t.id}')">${t.label}</button>`).join('')}
+      </div>
+      <div class="admin-content" id="admin-content">
+        <div style="text-align:center;color:var(--muted);padding:32px">⏳ Đang tải...</div>
+      </div>
+    </div>`;
+  await loadAdminTab();
+}
+
+async function switchAdminTab(tab) {
+  adminTab = tab;
+  document.querySelectorAll('.admin-nav-item').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.admin-nav-item').forEach(b => { if(b.textContent.trim().includes(ADMIN_TABS.find(t=>t.id===tab)?.label.trim().split(' ').pop())) b.classList.add('active'); });
+  // re-render sidebar active
+  const sidebar = document.querySelector('.admin-sidebar');
+  if (sidebar) sidebar.innerHTML = `
+    <div style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;padding:4px 12px 10px">Quản trị</div>
+    ${ADMIN_TABS.map(t=>`<button class="admin-nav-item ${adminTab===t.id?'active':''}" onclick="switchAdminTab('${t.id}')">${t.label}</button>`).join('')}`;
+  await loadAdminTab();
+}
+
+async function loadAdminTab() {
+  const c = $('admin-content');
+  if (!c) return;
+  c.innerHTML = `<div style="text-align:center;color:var(--muted);padding:32px">⏳ Đang tải...</div>`;
+  switch(adminTab) {
+    case 'dashboard': await renderAdminDashboard(c); break;
+    case 'products':  await renderAdminProducts(c); break;
+    case 'users':     await renderAdminUsers(c); break;
+    case 'orders':    await renderAdminOrders(c); break;
+    case 'topup':     await renderAdminTopUp(c); break;
+    case 'withdraw':  await renderAdminWithdraw(c); break;
+  }
+}
+
+// ── Admin: Dashboard ──
+async function renderAdminDashboard(c) {
+  const [usersRes, ordersRes, topupRes, withdrawRes, recentRes] = await Promise.all([
+    sb.rpc('admin_get_profiles'),
+    sb.rpc('admin_get_orders'),
+    sb.rpc('admin_get_topup_requests'),
+    sb.rpc('admin_get_withdraw_requests'),
+    sb.rpc('admin_get_orders'),
+  ]);
+  const users   = (Array.isArray(usersRes.data)  ? usersRes.data  : []).filter(u=>u.role==='user');
+  const orders  = Array.isArray(ordersRes.data)   ? ordersRes.data  : [];
+  const topups  = Array.isArray(topupRes.data)    ? topupRes.data   : [];
+  const withdraws = Array.isArray(withdrawRes.data) ? withdrawRes.data : [];
+  const recent  = orders.slice(0, 10);
+  const revenue = orders.filter(o=>o.status==='completed').reduce((s,o)=>s+(o.product_price||0),0);
+  const pendingTopup     = topups.filter(r=>r.status==='pending').length;
+  const pendingWithdraw  = withdraws.filter(r=>r.status==='pending').length;
+  c.innerHTML = `
+    <div class="section-title">Dashboard</div>
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(52,211,153,.12)">💰</div><div class="stat-val" style="color:var(--green)">${fmtVND(revenue)}</div><div class="stat-lbl">Tổng doanh thu</div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(59,130,246,.12)">👥</div><div class="stat-val" style="color:var(--primary)">${users.length}</div><div class="stat-lbl">Người dùng</div></div>
+      <div class="stat-card"><div class="stat-icon" style="background:rgba(251,191,36,.12)">📦</div><div class="stat-val" style="color:var(--yellow)">${orders.length}</div><div class="stat-lbl">Đơn hàng</div></div>
+      <div class="stat-card" style="cursor:pointer" onclick="switchAdminTab('topup')"><div class="stat-icon" style="background:rgba(251,146,60,.12)">💳</div><div class="stat-val" style="color:var(--orange)">${pendingTopup}</div><div class="stat-lbl">Chờ duyệt nạp</div></div>
+      <div class="stat-card" style="cursor:pointer" onclick="switchAdminTab('withdraw')"><div class="stat-icon" style="background:rgba(248,113,113,.12)">💸</div><div class="stat-val" style="color:var(--red)">${pendingWithdraw}</div><div class="stat-lbl">Chờ duyệt rút</div></div>
+    </div>
+    <div class="section-title">Đơn hàng gần đây</div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Sản phẩm</th><th>Người mua</th><th>Giá</th><th>Ngày mua</th></tr></thead>
+      <tbody>${recent.length?recent.map(o=>`<tr><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(o.product_name)}</td><td style="color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis">${esc(o.email||'—')}</td><td style="color:var(--red);font-variant-numeric:tabular-nums">-${fmtVND(o.product_price)}</td><td style="color:var(--muted)">${fmtDateShort(o.created_at)}</td></tr>`).join(''):'<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px">Chưa có đơn hàng</td></tr>'}</tbody>
+    </table></div></div>`;
+}
+// $('admin-content'));
+}
+
+async function deleteProduct(id, name) {
+  const ok = await confirm('Xoá sản phẩm?', `"${name}" sẽ bị ẩn khỏi cửa hàng.`);
+  if (!ok) return;
+  await sb.from('products').update({is_active:false}).eq('id',id);
+  toast('Đã xoá sản phẩm');
+  await renderAdminProducts($('admin-content'));
+}
+
+// ── Admin: Users ──
+let _adminUsersData = [];
+
+async function renderAdminUsers(c) {
+  const { data } = await sb.rpc('admin_get_profiles');
+  _adminUsersData = (Array.isArray(data)?data:[]).filter(u=>u.role==='user');
+  c.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      <div class="section-title" style="margin:0">Quản lý tài khoản người dùng</div>
+      <span class="badge badge-active">👥 ${_adminUsersData.length} người dùng</span>
+    </div>
+    <input class="form-input" style="max-width:320px;margin-bottom:14px" placeholder="🔍 Tìm theo email hoặc tên..." id="user-search" oninput="filterUserTable(this.value)">
+    <div class="card"><div class="table-wrap"><table id="user-table">
+      <thead><tr>
+        <th>#</th>
+        <th>Email</th>
+        <th>Tên đăng ký</th>
+        <th>Mật khẩu</th>
+        <th>Số dư</th>
+        <th>Ngày tạo</th>
+        <th>Trạng thái</th>
+        <th style="text-align:right">Thao tác</th>
+      </tr></thead>
+      <tbody id="user-tbody">${renderUserRows(_adminUsersData)}</tbody>
+    </table></div></div>
+    <!-- User Detail / Balance Modal -->
+    <div class="overlay" id="user-modal-overlay" onclick="if(event.target===this)closeUserModal()">
+      <div class="modal" style="max-width:440px">
+        <button class="modal-close" onclick="closeUserModal()">✕</button>
+        <div id="user-modal-body"></div>
+      </div>
+    </div>`;
+}
+
+function renderUserRows(users) {
+  if (!users.length) return '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Không có người dùng nào</td></tr>';
+  return users.map((u,idx) => `<tr data-email="${esc(u.email)}" data-name="${esc(u.full_name||u.username||'')}">
+    <td style="color:var(--muted);font-size:.8rem">${idx+1}</td>
+    <td style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(u.email)}</td>
+    <td style="color:var(--muted)">${esc(u.full_name||u.username||'—')}</td>
+    <td style="letter-spacing:.12em;color:var(--muted);font-size:.85rem">••••••••</td>
+    <td style="color:var(--green);font-variant-numeric:tabular-nums;font-weight:700">${fmtVND(u.balance)}</td>
+    <td style="color:var(--muted);font-size:.8rem">${fmtDateShort(u.created_at)}</td>
+    <td><span class="badge ${u.is_locked?'badge-locked':'badge-active'}">${u.is_locked?'🔒 Khoá':'✅ Hoạt động'}</span></td>
+    <td><div class="actions">
+      <button class="btn btn-secondary btn-sm" onclick="openUserDetail('${esc(u.id)}')">👁 Chi tiết</button>
+      <button class="btn btn-primary btn-sm" onclick="openAdjustBalance('${esc(u.id)}','${esc(u.email)}',${u.balance})">💰 Số dư</button>
+      <button class="btn ${u.is_locked?'btn-success':'btn-danger'} btn-sm" onclick="toggleUserLock('${esc(u.id)}',${!u.is_locked},'${esc(u.email)}')">${u.is_locked?'🔓 Mở':'🔒 Khoá'}</button>
+    </div></td>
+  </tr>`).join('');
+}
+
+function filterUserTable(q) {
+  const rows = document.querySelectorAll('#user-table tbody tr[data-email]');
+  const lq = q.toLowerCase();
+  rows.forEach(r => {
+    const email = (r.dataset.email||'').toLowerCase();
+    const name = (r.dataset.name||'').toLowerCase();
+    r.style.display = (!lq||email.includes(lq)||name.includes(lq)) ? '' : 'none';
+  });
+}
+
+function closeUserModal() {
+  const ov = document.getElementById('user-modal-overlay');
+  if (ov) ov.classList.remove('open');
+}
+
+function openUserDetail(userId) {
+  const u = _adminUsersData.find(x=>x.id===userId);
+  if (!u) return;
+  const ov = document.getElementById('user-modal-overlay');
+  const body = document.getElementById('user-modal-body');
+  if (!ov||!body) return;
+  body.innerHTML = `
+    <div class="modal-title">👤 Chi tiết tài khoản</div>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;padding:14px;background:var(--bg3);border-radius:var(--radius-sm)">
+      <div style="width:52px;height:52px;border-radius:50%;background:rgba(59,130,246,.2);display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:800;color:var(--primary);flex-shrink:0">
+        ${(u.full_name||u.email||'?').charAt(0).toUpperCase()}
+      </div>
+      <div>
+        <div style="font-weight:700;font-size:1rem">${esc(u.full_name||u.username||'Chưa đặt tên')}</div>
+        <div style="font-size:.82rem;color:var(--muted)">${esc(u.email)}</div>
+        <span class="badge ${u.is_locked?'badge-locked':'badge-active'}" style="margin-top:4px">${u.is_locked?'🔒 Đã khoá':'✅ Hoạt động'}</span>
+      </div>
+    </div>
+    <div class="info-row"><span>ID</span><span style="font-weight:600;font-size:.8rem;font-family:monospace">${esc(u.id)}</span></div>
+    <div class="info-row"><span>Email</span><span style="font-weight:600">${esc(u.email)}</span></div>
+    <div class="info-row"><span>Mật khẩu</span><span style="letter-spacing:.15em;color:var(--muted)">••••••••</span></div>
+    <div class="info-row"><span>Số dư ví</span><span style="font-weight:800;color:var(--green)">${fmtVND(u.balance)}</span></div>
+    <div class="info-row"><span>Vai trò</span><span class="badge badge-${u.role==='admin'?'admin':''}" style="margin:0">${u.role==='admin'?'🛡️ Quản trị viên':'👤 Người dùng'}</span></div>
+    <div class="info-row"><span>Ngày tạo</span><span style="color:var(--muted)">${fmtDate(u.created_at)}</span></div>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1" onclick="closeUserModal();openAdjustBalance('${esc(u.id)}','${esc(u.email)}',${u.balance})">💰 Điều chỉnh số dư</button>
+      <button class="btn ${u.is_locked?'btn-success':'btn-danger'}" style="flex:1" onclick="closeUserModal();toggleUserLock('${esc(u.id)}',${!u.is_locked},'${esc(u.email)}')">${u.is_locked?'🔓 Mở khoá':'🔒 Khoá tài khoản'}</button>
+    </div>`;
+  ov.classList.add('open');
+}
+
+function openAdjustBalance(userId, email, currentBalance) {
+  const ov = document.getElementById('user-modal-overlay');
+  const body = document.getElementById('user-modal-body');
+  if (!ov||!body) return;
+  body.innerHTML = `
+    <div class="modal-title">💰 Điều chỉnh số dư</div>
+    <div style="background:var(--bg3);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;font-size:.88rem">
+      <div style="color:var(--muted);margin-bottom:4px">Tài khoản</div>
+      <div style="font-weight:700">${esc(email)}</div>
+      <div style="color:var(--green);font-variant-numeric:tabular-nums;font-weight:800;margin-top:4px">Số dư hiện tại: ${fmtVND(currentBalance)}</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Loại thao tác</label>
+      <select class="form-select" id="adj-type" onchange="updateAdjPreview('${userId}',${currentBalance})">
+        <option value="add">➕ Nạp tiền (cộng)</option>
+        <option value="deduct">➖ Trừ tiền (giảm)</option>
+        <option value="set">⚙️ Đặt số dư cụ thể</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Số tiền (VNĐ)</label>
+      <input class="form-input" id="adj-amount" type="number" min="0" step="1000" placeholder="Nhập số tiền..." oninput="updateAdjPreview('${userId}',${currentBalance})">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Ghi chú (tuỳ chọn)</label>
+      <input class="form-input" id="adj-note" placeholder="Lý do điều chỉnh...">
+    </div>
+    <div id="adj-preview" style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:var(--radius-sm);padding:10px 14px;font-size:.88rem;margin-bottom:16px;display:none">
+      <div style="color:var(--muted);margin-bottom:4px">Số dư sau khi điều chỉnh</div>
+      <div id="adj-preview-val" style="font-size:1.3rem;font-weight:900;color:var(--green);font-variant-numeric:tabular-nums"></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeUserModal()">Huỷ</button>
+      <button class="btn btn-primary" style="flex:1" onclick="submitAdjustBalance('${userId}','${esc(email)}',${currentBalance})">✅ Xác nhận</button>
+    </div>`;
+  ov.classList.add('open');
+}
+
+function updateAdjPreview(userId, currentBalance) {
+  const type = document.getElementById('adj-type')?.value;
+  const amt = parseFloat(document.getElementById('adj-amount')?.value||0);
+  const preview = document.getElementById('adj-preview');
+  const previewVal = document.getElementById('adj-preview-val');
+  if (!preview||!previewVal) return;
+  if (!amt || amt<=0) { preview.style.display='none'; return; }
+  let newBal = currentBalance;
+  if (type==='add') newBal = currentBalance + amt;
+  else if (type==='deduct') newBal = currentBalance - amt;
+  else if (type==='set') newBal = amt;
+  preview.style.display = '';
+  previewVal.textContent = fmtVND(newBal);
+  previewVal.style.color = newBal < 0 ? 'var(--red)' : 'var(--green)';
+}
+
+async function submitAdjustBalance(userId, email, currentBalance) {
+  const type = document.getElementById('adj-type')?.value;
+  const amt = parseFloat(document.getElementById('adj-amount')?.value||0);
+  const note = document.getElementById('adj-note')?.value.trim()||'';
+  if (!amt||amt<=0) { toast('Vui lòng nhập số tiền hợp lệ','error'); return; }
+  let newBal = currentBalance;
+  let txType = 'adjustment';
+  let txAmt = amt;
+  if (type==='add') { newBal = currentBalance + amt; }
+  else if (type==='deduct') {
+    if (amt > currentBalance) { toast('Số dư không đủ để trừ','error'); return; }
+    newBal = currentBalance - amt;
+    txAmt = -amt;
+  } else if (type==='set') {
+    txAmt = amt - currentBalance;
+    newBal = amt;
+  }
+  const ok = await confirm('Xác nhận điều chỉnh?', `${email}: ${fmtVND(currentBalance)} → ${fmtVND(newBal)}`);
+  if (!ok) return;
+  // Update balance in profiles
+  const { error: e1 } = await sb.from('profiles').update({ balance: newBal }).eq('id', userId);
+  if (e1) { toast(e1.message||'Cập nhật thất bại','error'); return; }
+  // Create transaction record
+  await sb.from('transactions').insert({
+    user_id: userId,
+    type: txType,
+    amount: Math.abs(txAmt),
+    note: note || (type==='add'?'Admin nạp tiền':type==='deduct'?'Admin trừ tiền':'Admin đặt số dư'),
+    status: 'completed'
+  });
+  toast(`Đã cập nhật số dư: ${fmtVND(newBal)}`);
+  closeUserModal();
+  await renderAdminUsers(document.getElementById('admin-content'));
+}
+
+async function toggleUserLock(userId, lock, email) {
+  const ok = await confirm(lock?'Khoá tài khoản?':'Mở khoá tài khoản?', `${lock?'Khoá':'Mở khoá'} tài khoản: ${email}`);
+  if (!ok) return;
+  const { data, error } = await sb.rpc('toggle_user_lock', { p_user_id: userId, p_lock: lock });
+  if (error||!data?.ok) { toast(data?.error||error?.message||'Thao tác thất bại','error'); return; }
+  toast(lock?'Đã khoá tài khoản':'Đã mở khoá tài khoản');
+  await renderAdminUsers(document.getElementById('admin-content'));
+}
+
+// ── Admin: Orders ──
+async function renderAdminOrders(c) {
+  const { data } = await sb.rpc('admin_get_orders');
+  const orders = Array.isArray(data)?data:[];
+  c.innerHTML = `
+    <div class="section-title">Quản lý đơn hàng</div>
+    <input class="form-input" style="max-width:280px;margin-bottom:14px" placeholder="🔍 Tìm sản phẩm hoặc email..." id="ord-search" oninput="filterOrderTable(this.value)">
+    <div class="card"><div class="table-wrap"><table id="ord-table">
+      <thead><tr><th>Sản phẩm</th><th>Người mua</th><th>Giá</th><th>Ngày mua</th><th>Trạng thái</th></tr></thead>
+      <tbody>${orders.length?orders.map(o=>`<tr data-pname="${esc(o.product_name)}" data-email="${esc(o.email||'')}">
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;font-weight:600">${esc(o.product_name)}</td>
+        <td style="color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis">${esc(o.email||'—')}</td>
+        <td style="color:var(--red);font-variant-numeric:tabular-nums;font-weight:700">-${fmtVND(o.product_price)}</td>
+        <td style="color:var(--muted)">${fmtDate(o.created_at)}</td>
+        <td><span class="badge badge-${o.status}">${{completed:'Hoàn thành',refunded:'Hoàn tiền',cancelled:'Đã huỷ'}[o.status]||o.status}</span></td>
+      </tr>`).join(''):'<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Chưa có đơn hàng</td></tr>'}</tbody>
+    </table></div></div>`;
+}
+function filterOrderTable(q) {
+  const rows = document.querySelectorAll('#ord-table tbody tr[data-pname]');
+  const lq = q.toLowerCase();
+  rows.forEach(r => {
+    const pname=(r.dataset.pname||'').toLowerCase();
+    const email=(r.dataset.email||'').toLowerCase();
+    r.style.display=(!lq||pname.includes(lq)||email.includes(lq))?'':'none';
+  });
+}
+
+// ── Admin: Top-Up ──
+let topupTabFilter = 'pending';
+async function renderAdminTopUp(c) {
+  const { data } = await sb.rpc('admin_get_topup_requests');
+  const all = Array.isArray(data)?data:[];
+  const pending = all.filter(r=>r.status==='pending');
+  const approved = all.filter(r=>r.status==='approved');
+  const rejected = all.filter(r=>r.status==='rejected');
+  const byFilter = {pending,approved,rejected};
+  const SL={pending:'Chờ duyệt',approved:'Đã duyệt',rejected:'Từ chối'};
+
+  const rows = byFilter[topupTabFilter];
+  c.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="section-title" style="margin:0">Duyệt nạp tiền</div>
+      ${pending.length?`<span class="badge badge-pending">💰 ${pending.length} chờ duyệt</span>`:''}
+    </div>
+    <div class="tabs">
+      <button class="tab-btn ${topupTabFilter==='pending'?'active':''}" onclick="setTopupTabFilter('pending')">Chờ duyệt${pending.length?`<span class="tab-badge">${pending.length}</span>`:''}</button>
+      <button class="tab-btn ${topupTabFilter==='approved'?'active':''}" onclick="setTopupTabFilter('approved')">Đã duyệt (${approved.length})</button>
+      <button class="tab-btn ${topupTabFilter==='rejected'?'active':''}" onclick="setTopupTabFilter('rejected')">Từ chối (${rejected.length})</button>
+    </div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Người dùng</th><th>Số tiền</th><th>Ngày yêu cầu</th><th>Trạng thái</th><th style="text-align:right">Thao tác</th></tr></thead>
+      <tbody>${rows.length?rows.map(r=>`<tr>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;color:var(--muted)">${esc(r.email||'—')}</td>
+        <td style="color:var(--green);font-variant-numeric:tabular-nums;font-weight:800">+${fmtVND(r.amount)}</td>
+        <td style="color:var(--muted)">${fmtDate(r.created_at)}</td>
+        <td><span class="badge badge-${r.status}">${SL[r.status]}</span></td>
+        <td><div class="actions">${r.status==='pending'?`
+          <button class="btn btn-success btn-sm" onclick="approveTopUp('${esc(r.id)}')">✅ Duyệt</button>
+          <button class="btn btn-danger btn-sm" onclick="rejectTopUp('${esc(r.id)}')">❌ Từ chối</button>
+        `:`<span style="font-size:.78rem;color:var(--muted)">${r.reviewed_at?fmtDateShort(r.reviewed_at):'—'}</span>`}</div></td>
+      </tr>`).join(''):`<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Không có yêu cầu nào</td></tr>`}</tbody>
+    </table></div></div>`;
+}
+
+async function setTopupTabFilter(f) { topupTabFilter=f; await renderAdminTopUp($('admin-content')); }
+
+async function approveTopUp(id) {
+  const btn = document.querySelector(`button[onclick="approveTopUp('${id}')"]`);
+  if (btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
+  const { data, error } = await sb.rpc('approve_top_up', { p_request_id: id });
+  if (error||!data?.ok) { toast(data?.error||error?.message||'Duyệt thất bại','error'); if(btn){btn.disabled=false;btn.innerHTML='✅ Duyệt';} return; }
+  toast('Đã duyệt và cộng tiền vào ví!');
+  await renderAdminTopUp($('admin-content'));
+}
+
+async function rejectTopUp(id) {
+  const ok = await confirm('Từ chối yêu cầu?', 'Yêu cầu nạp tiền sẽ bị từ chối và không cộng tiền.');
+  if (!ok) return;
+  const { data, error } = await sb.rpc('reject_top_up', { p_request_id: id, p_note: 'Admin từ chối' });
+  if (error||!data?.ok) { toast(data?.error||error?.message||'Từ chối thất bại','error'); return; }
+  toast('Đã từ chối yêu cầu');
+  await renderAdminTopUp($('admin-content'));
+}
+
+// ── Admin: Withdraw ──
+let withdrawTabFilter = 'pending';
+async function renderAdminWithdraw(c) {
+  const { data, error } = await sb.rpc('admin_get_withdraw_requests');
+  const all = Array.isArray(data) ? data : [];
+  const pending  = all.filter(r => r.status === 'pending');
+  const approved = all.filter(r => r.status === 'approved');
+  const rejected = all.filter(r => r.status === 'rejected');
+  const byFilter = { pending, approved, rejected };
+  const SL = { pending:'Chờ duyệt', approved:'Đã duyệt', rejected:'Từ chối' };
+  const rows = byFilter[withdrawTabFilter] || [];
+  c.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="section-title" style="margin:0">Duyệt rút tiền</div>
+      ${pending.length ? `<span class="badge badge-pending">💸 ${pending.length} chờ duyệt</span>` : ''}
+    </div>
+    <div class="tabs">
+      <button class="tab-btn ${withdrawTabFilter==='pending'?'active':''}" onclick="setWithdrawTabFilter('pending')">Chờ duyệt${pending.length?`<span class="tab-badge">${pending.length}</span>`:''}</button>
+      <button class="tab-btn ${withdrawTabFilter==='approved'?'active':''}" onclick="setWithdrawTabFilter('approved')">Đã duyệt (${approved.length})</button>
+      <button class="tab-btn ${withdrawTabFilter==='rejected'?'active':''}" onclick="setWithdrawTabFilter('rejected')">Từ chối (${rejected.length})</button>
+    </div>
+    <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Người dùng</th><th>Ngân hàng</th><th>Số TK / Chủ TK</th><th>Số tiền</th><th>Ngày yêu cầu</th><th>Trạng thái</th><th style="text-align:right">Thao tác</th></tr></thead>
+      <tbody>${rows.length ? rows.map(r => `<tr>
+        <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;color:var(--muted)">${esc(r.email||'—')}</td>
+        <td style="font-weight:600">${esc(r.bank_name)}</td>
+        <td><div style="font-weight:700;font-variant-numeric:tabular-nums">${esc(r.account_number)}</div><div style="font-size:.78rem;color:var(--muted)">${esc(r.account_holder)}</div></td>
+        <td style="color:var(--orange);font-variant-numeric:tabular-nums;font-weight:800">-${fmtVND(r.amount)}</td>
+        <td style="color:var(--muted)">${fmtDate(r.created_at)}</td>
+        <td><span class="badge badge-${r.status}">${SL[r.status]}</span></td>
+        <td><div class="actions">${r.status==='pending' ? `
+          <button class="btn btn-success btn-sm" onclick="approveWithdraw('${esc(r.id)}')">✅ Duyệt</button>
+          <button class="btn btn-danger btn-sm" onclick="rejectWithdraw('${esc(r.id)}')">❌ Từ chối</button>
+        ` : `<span style="font-size:.78rem;color:var(--muted)">${r.reviewed_at ? fmtDateShort(r.reviewed_at) : '—'}</span>`}</div></td>
+      </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">Không có yêu cầu nào</td></tr>`}</tbody>
+    </table></div></div>`;
+}
+
+async function setWithdrawTabFilter(f) { withdrawTabFilter = f; await renderAdminWithdraw($('admin-content')); }
+
+async function approveWithdraw(id) {
+  const btn = document.querySelector(`button[onclick="approveWithdraw('${id}')"]`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  const { data, error } = await sb.rpc('approve_withdraw', { p_request_id: id });
+  if (error || !data?.ok) {
+    toast(data?.error || error?.message || 'Duyệt thất bại', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '✅ Duyệt'; }
+    return;
+  }
+  toast('Đã duyệt rút tiền và trừ số dư!');
+  await renderAdminWithdraw($('admin-content'));
+}
+
+async function rejectWithdraw(id) {
+  const ok = await confirm('Từ chối yêu cầu rút tiền?', 'Yêu cầu rút tiền sẽ bị từ chối, số dư không bị thay đổi.');
+  if (!ok) return;
+  const { data, error } = await sb.rpc('reject_withdraw', { p_request_id: id, p_note: 'Admin từ chối' });
+  if (error || !data?.ok) { toast(data?.error || error?.message || 'Từ chối thất bại', 'error'); return; }
+  toast('Đã từ chối yêu cầu rút tiền');
+  await renderAdminWithdraw($('admin-content'));
+}
+
+// ═══════════════════════════════════════════════
+//  INIT
+..
+// ═══════════════════════════════════════════════
+(async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session?.user) {
+    currentUser = session.user;
+    currentProfile = await fetchProfile(session.user.id);
+  }
+  updateNavAuth();
+  render();
+
+  sb.auth.onAuthStateChange(async (_event, session) => {
+    currentUser = session?.user || null;
+    if (currentUser) {
+      currentProfile = await fetchProfile(currentUser.id);
+    } else {
+      currentProfile = null;
+    }
+    updateNavAuth();
+  });
+})();
+</script>
+</body>
+</html>
